@@ -42,9 +42,22 @@ if [ -f /usr/local/bin/rsync ]; then
 elif [ -f /user/bin/rsync ]; then
 	RSYNC="/usr/bin/rsync"
 else
-	echo "RSYNC should be set to rsync>=3.1.0"
+	echo "\$RSYNC should be set to rsync>=3.1.0"
 	exit 1
 fi
+
+# Parse rsync version.
+RSYNC_VER="`$RSYNC --version | \
+head -1 | \
+gsed \"s/^.*[^0-9]\([0-9]*\.[0-9]*\.[0-9]*\).*$/\1/\"`"
+RSYNC_MAJOR_VER="`echo $RSYNC_VER | cut -c 1`"
+RSYNC_MINOR_VER="`echo $RSYNC_VER | cut -c 3`"
+if [ "$RSYNC_MAJOR_VER" -lt "3" ] || [ "$RSYNC_MINOR_VER" -lt "1" ]; then
+	echo "$RSYNC is version $RSYNC_VER, must be rsync>=3.1.0"
+	exit 1
+fi
+
+
 
 # Must have GNU sed
 if [ -f /usr/local/bin/gsed ]; then
@@ -52,7 +65,7 @@ if [ -f /usr/local/bin/gsed ]; then
 elif [ -f /usr/bin/sed ]; then
 	SED="/usr/bin/sed"
 else
-	echo "SED should be set to GNU sed"
+	echo "\$SED should be set to GNU sed"
 	exit 1
 fi
 
