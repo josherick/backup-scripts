@@ -39,7 +39,7 @@ DRY_RUN="false"
 # Must have rsync>=3.1.0
 if [ -f /usr/local/bin/rsync ]; then
 	RSYNC="/usr/local/bin/rsync" # homebrew
-elif [ -f /user/bin/rsync ]; then
+elif [ -f /usr/bin/rsync ]; then
 	RSYNC="/usr/bin/rsync"
 else
 	echo "\$RSYNC should be set to rsync>=3.1.0"
@@ -57,8 +57,6 @@ if [ "$RSYNC_MAJOR_VER" -lt "3" ] || [ "$RSYNC_MINOR_VER" -lt "1" ]; then
 	exit 1
 fi
 
-
-
 # Must have GNU sed
 if [ -f /usr/local/bin/gsed ]; then
 	SED="/usr/local/bin/gsed" # homebrew
@@ -69,6 +67,12 @@ else
 	exit 1
 fi
 
+# sed --version fails on BSD sed.
+if ! $SED --version > /dev/null 2> /dev/null ; then
+	echo "Make sure you have GNU sed installed!"
+	exit 1
+fi
+
 # Caffeinate if it's available.
 if [ -f /usr/bin/caffeinate ]; then
 	CAFFEINATE="/usr/bin/caffeinate -s"
@@ -76,11 +80,6 @@ else
 	CAFFEINATE=""
 fi
 
-# sed --version fails on BSD sed.
-if ! $SED --version > /dev/null 2> /dev/null ; then
-	echo "Make sure you have GNU sed installed!"
-	exit 1
-fi
 
 
 # Make sure exclude file exists.
