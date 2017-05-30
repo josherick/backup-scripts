@@ -1,11 +1,5 @@
 #!/bin/bash
 
-# Fail the script if a command fails.
-# Note there are certain situations which set -e does not work, so be careful
-# when adding new commands.
-set -e
-set -o pipefail
-
 ###############################################################################
 ############# CHECK THIS SECTION BEFORE RUNNING ON A NEW MACHINE ##############
 ###############################################################################
@@ -14,20 +8,22 @@ set -o pipefail
 # named rsync-exclusions.${PLATFORM}.txt
 PLATFORM="mac"
 
-# The location of the drive to backup to.
+# The location of the drive to backup to, without a trailing slash.
 DRIVE="/Volumes/Nemo 4TB RAID 1"
 
 # The root location of what you want to back up.
+# A trailing slash indicates that the contents of the directory should be
+# backed up, which is probably what you want.
 ORIGINAL_DIR="/"
 
 # Hostname of this computer, used to identify its backups from other machines.
 HOSTNAME=`hostname`
 
+# Set to true to run rsync as the superuser using sudo.
+RUN_AS_SUPERUSER="true"
+
 # Set to false if the script shouldn't prompt for confirmation before running.
 ASK_FOR_CONFIRMATION="true"
-
-# Set to true to run rsync as the superuser using sudo.
-RUN_AS_SUPERUSER="false"
 
 # Set to true if you'd like rsync to do a dry-run instead of a real backup.
 DRY_RUN="false"
@@ -36,26 +32,11 @@ DRY_RUN="false"
 ########### ^ CHECK THIS SECTION BEFORE RUNNING ON A NEW MACHINE ^ ############
 ###############################################################################
 
-# Must have rsync>=3.1.0
-if [ -f /usr/local/bin/rsync ]; then
-	RSYNC="/usr/local/bin/rsync" # homebrew
-elif [ -f /usr/bin/rsync ]; then
-	RSYNC="/usr/bin/rsync"
-else
-	echo "\$RSYNC should be set to rsync>=3.1.0"
-	exit 1
-fi
-
-# Parse rsync version.
-RSYNC_VER="`$RSYNC --version | \
-head -1 | \
-gsed \"s/^.*[^0-9]\([0-9]*\.[0-9]*\.[0-9]*\).*$/\1/\"`"
-RSYNC_MAJOR_VER="`echo $RSYNC_VER | cut -c 1`"
-RSYNC_MINOR_VER="`echo $RSYNC_VER | cut -c 3`"
-if [ "$RSYNC_MAJOR_VER" -lt "3" ] || [ "$RSYNC_MINOR_VER" -lt "1" ]; then
-	echo "$RSYNC is version $RSYNC_VER, must be rsync>=3.1.0"
-	exit 1
-fi
+# Fail the script if a command fails.
+# Note there are certain situations which set -e does not work, so be careful
+# when adding new commands.
+set -e
+set -o pipefail
 
 # Must have GNU sed
 if [ -f /usr/local/bin/gsed ]; then
@@ -73,14 +54,26 @@ if ! $SED --version > /dev/null 2> /dev/null ; then
 	exit 1
 fi
 
-# Caffeinate if it's available.
-if [ -f /usr/bin/caffeinate ]; then
-	CAFFEINATE="/usr/bin/caffeinate -s"
+# Must have rsync>=3.1.0
+if [ -f /usr/local/bin/rsync ]; then
+	RSYNC="/usr/local/bin/rsync" # homebrew
+elif [ -f /usr/bin/rsync ]; then
+	RSYNC="/usr/bin/rsync"
 else
-	CAFFEINATE=""
+	echo "\$RSYNC should be set to rsync>=3.1.0"
+	exit 1
 fi
 
-
+# Parse rsync version.
+RSYNC_VER="`$RSYNC --version | \
+head -1 | \
+$SED \"s/^.*[^0-9]\([0-9]*\.[0-9]*\.[0-9]*\).*$/\1/\"`"
+RSYNC_MAJOR_VER="`echo $RSYNC_VER | cut -c 1`"
+RSYNC_MINOR_VER="`echo $RSYNC_VER | cut -c 3`"
+if [ "$RSYNC_MAJOR_VER" -lt "3" ] || [ "$RSYNC_MINOR_VER" -lt "1" ]; then
+	echo "$RSYNC is version $RSYNC_VER, must be rsync>=3.1.0"
+	exit 1
+fi
 
 # Make sure exclude file exists.
 EXCLUDE_FILE=`realpath rsync-exclusions.${PLATFORM}.txt`
@@ -89,7 +82,14 @@ if [ ! -f "$EXCLUDE_FILE" ]; then
 	exit 1
 fi
 
-# Make sure exclude file exists.
+# Caffeinate if it's available.
+if [ -f /usr/bin/caffeinate ]; then
+	CAFFEINATE="/usr/bin/caffeinate -i "
+else
+	CAFFEINATE=""
+fi
+
+# Run as sudo if requested.
 if [ "$RUN_AS_SUPERUSER" = "true" ]; then
 	SUDO="sudo "
 else
@@ -99,27 +99,55 @@ fi
 # Define some formatting.
 BOLD=`tput bold`
 GREEN=`tput setaf 2`
+RED=`tput setaf 1`
 NORMAL=`tput sgr0`
 
 # The location of this hostname's backup directory.
 BACKUP_DIR="$DRIVE/rsync-backups/$HOSTNAME"
 
+# Location of the log file (potentially an old log file, which we will move)
 LOG="$BACKUP_DIR/backup.log"
 
 
+# If there is a most recent backup, set variables accordingly.
 if [ -f "$BACKUP_DIR/current" ]; then
 	PREVIOUS=`cat "$BACKUP_DIR/current"`
 	INCREMENTS_DIR="$BACKUP_DIR/increments/$PREVIOUS"
 fi
 
+# This is who rsync runs as.
+if [ ! "$RUN_AS_SUPERUSER" = "true" ]; then
+	RUN_AS="$BOLD`whoami`$NORMAL"
+else
+	RUN_AS="${RED}root${NORMAL}"
+fi
 
+
+# Make sure that the user knows where we're backing up from and to.
 if [ "$ASK_FOR_CONFIRMATION" = "true" ]; then
-	# Make sure that the user knows where we're backing up from and to.
+	echo "Run as:                         $BOLD$RUN_AS$NORMAL"
+	echo "Dry run:                        $BOLD$DRY_RUN$NORMAL"
 	echo "Backup from directory:          $BOLD$ORIGINAL_DIR$NORMAL"
 	echo "Backup to drive:                $BOLD$DRIVE$NORMAL"
 	echo "Backup with hostname:           $BOLD$HOSTNAME$NORMAL"
 	echo "Backup platform (for excludes): $BOLD$PLATFORM$NORMAL"
 	echo ""
+
+	if [ ! "$RUN_AS_SUPERUSER" = "true" ]; then
+		echo "${BOLD}Note:${NORMAL} rsync will be run by ${BOLD}$RUN_AS${NORMAL} \
+instead of the superuser. 
+Some permissions may not be able to be preserved."
+		echo ""
+	fi
+
+	if [ "$RUN_AS_SUPERUSER" = "true" ] && [ ! "$DRY_RUN" = "true" ]; then
+		echo "${RED}WARNING:${NORMAL} rsync will be run by $BOLD$RUN_AS$NORMAL. \
+Be careful when using this option, 
+and consider doing a dry-run first to see what will be changed. Depending
+on your sudo settings, you may not be prompted for a password."
+		echo ""
+	fi
+
 	if [ "$DRY_RUN" = "true" ]; then
 		echo "${BOLD}Note:${NORMAL} This is a ${BOLD}dry-run${NORMAL}. \
 In order to get rsync to run properly and not throw
@@ -128,6 +156,8 @@ recent backup rather than timestamp that this backup would have. This is to
 avoid touching your files at all."
 		echo ""
 	fi
+
+	# Pause to confirm.
 	read -p "Confirm backup? [Y/n] " -n 1
 	if [[ ! $REPLY =~ ^[Yy]$ ]] && [ ! -z $REPLY ]; then
 		echo ""
@@ -158,13 +188,18 @@ function print_and_execute {
 	fi
 }
 
+quote()
+{
+    local quoted=${1//\'/\'\\\'\'}
+    printf "'%s'" "$quoted"
+}
+
 # Define a unique date string to identify this backup.
 DATE=`date +%F_%H.%M.%S.%Z`
 
 # Create directory our log should be in if it doesn't exist.
 if [ ! -e "`dirname \"$LOG\"`" ] && [ ! "$DRY_RUN" = "true" ]; then
 	mkdir -p "`dirname \"$LOG\"`"
-	eval $COMMAND
 fi
 
 # Suffix the old log file with "old" if it exists and this isn't a dry-run.
@@ -181,38 +216,38 @@ if [ ! "$DRY_RUN" = "true" ]; then
 fi
 
 
+# Move files and create directories to ensure we have a space for this backup.
 echo ""
-
 if [ -f "$BACKUP_DIR/current" ]; then
 	MESSAGE="Creating a space for this backup and for increments from the previous backup..."
 	print_and_log "$MESSAGE"
 
 	# Rename the previous backup folder to be the current backup.
-	COMMAND="mv \"$BACKUP_DIR/$PREVIOUS\" \"$BACKUP_DIR/$DATE\""
+	COMMAND="mv $(quote "$BACKUP_DIR/$PREVIOUS") $(quote "$BACKUP_DIR/$DATE")"
 	print_and_execute "$COMMAND"
 
 	# Create a space for the backup we are overwriting.
-	COMMAND="mkdir \"$INCREMENTS_DIR\""
+	COMMAND="mkdir $(quote "$INCREMENTS_DIR")"
 	print_and_execute "$COMMAND"
 
 	# Move the old log to this incremental folder.
-	COMMAND="mv \"$OLD_LOG\" \"$INCREMENTS_DIR/backup.log\""
+	COMMAND="mv $(quote "$OLD_LOG") $(quote "$INCREMENTS_DIR/backup.log")"
 	print_and_execute "$COMMAND"
 
 	# Create a space the actual files that are overwritten by this backup.
 	INCREMENTS_DIR=$INCREMENTS_DIR/changes
-	COMMAND="mkdir \"$INCREMENTS_DIR\""
+	COMMAND="mkdir $(quote "$INCREMENTS_DIR")"
 	print_and_execute "$COMMAND"
 else
 	MESSAGE="Creating backup directory and setting it to the current backup..."
 	print_and_log "$MESSAGE"
 
 	# Create backup directory if it doesn't exist.
-	COMMAND="mkdir -p \"$BACKUP_DIR/$DATE\""
+	COMMAND="mkdir -p $(quote "$BACKUP_DIR/$DATE")"
 	print_and_execute "$COMMAND"
 
 	# Create increments directory if it doesn't exist.
-	COMMAND="mkdir -p \"$BACKUP_DIR/increments\""
+	COMMAND="mkdir -p $(quote "$BACKUP_DIR/increments")"
 	print_and_execute "$COMMAND"
 
 	# This shouldn't be used since this is our first backup, but we'll create
@@ -223,7 +258,7 @@ else
 fi
 
 # Set the new current backup.
-COMMAND="echo $DATE > \"$BACKUP_DIR/current\""
+COMMAND="echo $DATE > $(quote "$BACKUP_DIR/current")"
 print_and_execute "$COMMAND"
 
 # The directory to actually put the files we're backing up.
@@ -235,24 +270,11 @@ CURRENT_BACKUP_DIR="$DRIVE/rsync-backups/$HOSTNAME/$DATE"
 
 # Make a copy of them first so they aren't deleted, unless this is the first
 # sync.
-
 if [ ! "$JUST_CREATED" = "true" ]; then
 	print_and_log ""
-	MESSAGE="Copying files that will be pruned by rsync to increments directory..."
+	MESSAGE="Calculating and making copies of files that will be pruned by rsync..."
 	print_and_log "$MESSAGE"
 
-	RSYNC_OPTIONS="--archive \
-		--xattrs \
-		--hard-links \
-		--update \
-		--dry-run \
-		--verbose \
-		--delete \
-		--exclude-from=\"$EXCLUDE_FILE\""
-
-	# Pipe rsync dry-run to sed, filtering lines down to only the relative paths
-	# of the files that will be deleted, then copy each file individually with it's
-	# relative path into the increments directory.
 	if [ ! "$DRY_RUN" = "true" ]; then
 		COPY_TO=$CURRENT_BACKUP_DIR
 	else
@@ -262,7 +284,7 @@ if [ ! "$JUST_CREATED" = "true" ]; then
 	# We want to evaluate cd whether this is a dry-run or not.
 	# Running cd in a bash script won't change anything outside, and it is
 	# necessary for the following rsync commands to work properly.
-	COMMAND="cd \"$COPY_TO\""
+	COMMAND="cd $(quote "$COPY_TO")"
 	if [ ! "$DRY_RUN" = "true" ]; then
 		# Evaluate and log.
 		echo $ $GREEN$COMMAND$NORMAL
@@ -270,11 +292,23 @@ if [ ! "$JUST_CREATED" = "true" ]; then
 		eval $COMMAND 2> >(tee -a "$LOG" >&2)
 	else
 		# Evaluate without any logging.
-		echo $ ${GREEN}cd $CURRENT_BACKUP_DIR$NORMAL
+		echo "$ ${GREEN}cd $(quote "$CURRENT_BACKUP_DIR")$NORMAL"
 		eval $COMMAND
 	fi
 
-	COMMAND="$SUDO$RSYNC $RSYNC_OPTIONS \"$ORIGINAL_DIR\" \"$COPY_TO\" | \
+	# Pipe rsync dry-run to sed, filtering lines down to only the relative
+	# paths of the files that will be deleted, then copy each file individually
+	# with it's relative path into the increments directory.
+	RSYNC_OPTIONS="--archive \
+		--xattrs \
+		--hard-links \
+		--update \
+		--dry-run \
+		--verbose \
+		--delete \
+		--exclude-from=$(quote "$EXCLUDE_FILE")"
+
+	COMMAND="$SUDO$RSYNC $RSYNC_OPTIONS $(quote "$ORIGINAL_DIR") $(quote "$COPY_TO") | \
 			$SED -n \"/^deleting /p\" | \
 			$SED \"s/^deleting //g\""
 
@@ -283,9 +317,9 @@ if [ ! "$JUST_CREATED" = "true" ]; then
 	print_and_log_command "$COMMAND"
 	while read -r RELATIVE_PATH; do
 		RSYNC_OPTIONS="--archive --hard-links --xattrs --relative"
-		COMMAND="$CAFFEINATE $SUDO$RSYNC $RSYNC_OPTIONS \"$RELATIVE_PATH\" \"$INCREMENTS_DIR\""
+		COMMAND="$CAFFEINATE$SUDO$RSYNC $RSYNC_OPTIONS $(quote "$RELATIVE_PATH") $(quote "$INCREMENTS_DIR")"
 		if [ ! "$DRY_RUN" = "true" ]; then
-			# Print (don't log, there could be lots of these!)
+			# Log (don't print, there could be lots of these!)
 			echo $ $COMMAND >> "$LOG"
 			eval $COMMAND 2> >(tee -a "$LOG" >&2)
 		fi
@@ -297,7 +331,7 @@ if [ ! "$JUST_CREATED" = "true" ]; then
 fi
 
 
-# Perform the actual rsync operation!
+# Perform the actual rsync operation.
 print_and_log ""
 print_and_log "Starting rsync..."
 
@@ -305,25 +339,33 @@ RSYNC_OPTIONS="--archive \
 	--xattrs \
 	--hard-links \
 	--update \
-	--exclude-from=\"$EXCLUDE_FILE\" \
+	--exclude-from=$(quote "$EXCLUDE_FILE") \
 	--fuzzy \
 	--delete-after \
 	--backup \
 	--info=progress2 \
-	--backup-dir=\"$INCREMENTS_DIR\""
+	--backup-dir=$(quote "$INCREMENTS_DIR")"
 
+# Dry-runs log to console, real runs log to log file.
 if [ "$DRY_RUN" = "true" ]; then
 	RSYNC_OPTIONS="$RSYNC_OPTIONS --dry-run --verbose"
 	COPY_TO=$BACKUP_DIR/$PREVIOUS
 else
-	RSYNC_OPTIONS="$RSYNC_OPTIONS --log-file=\"$LOG\""
+	RSYNC_OPTIONS="$RSYNC_OPTIONS --log-file=$(quote "$LOG")"
 	COPY_TO=$CURRENT_BACKUP_DIR
 fi
 
-COMMAND="$CAFFEINATE $SUDO$RSYNC $RSYNC_OPTIONS \"$ORIGINAL_DIR\" \"$COPY_TO\""
-print_and_execute "$COMMAND"
+COMMAND="$CAFFEINATE$SUDO$RSYNC $RSYNC_OPTIONS $(quote "$ORIGINAL_DIR") $(quote "$COPY_TO")"
+print_and_log_command "$COMMAND"
+if [ ! "$DRY_RUN" = "true" ]; then
+	# Evaluate and log.
+	eval $COMMAND 2> >(tee -a "$LOG" >&2)
+else
+	# Evaluate without any logging.
+	eval $COMMAND
+fi
 
 # Log end time.
-if [ "$DRY_RUN" = "true" ]; then
+if [ ! "$DRY_RUN" = "true" ]; then
 	echo END `date +%F-%H%M%S%Z` >> "$LOG"
 fi
