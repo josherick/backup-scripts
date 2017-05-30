@@ -190,31 +190,37 @@ quote()
 # Define a unique date string to identify this backup.
 DATE=`date +%F_%H.%M.%S.%Z`
 
-# Caffeinate if it's available.
-if [ -f /usr/bin/caffeinate ]; then
-	COMMAND="/usr/bin/caffeinate -dim -w $$"
-	print_and_execute "$COMMAND"
-fi
 
 DIRNAME="`dirname \"$LOG\"`"
 # Create directory our log should be in if it doesn't exist.
 if [ ! -e "$DIRNAME" ]; then
-	COMMAND="mkdir -p $(quote "$DIRNAME")"
-	print_and_execute "$COMMAND"
-	
+	mkdir -p "$DIRNAME"
 fi
 
 # Suffix the old log file with "old" if it exists and this isn't a dry-run.
 BASENAME="`basename \"$LOG\"`"
 OLD_LOG="${DIRNAME}/${BASENAME}.old"
 if [ -f "$LOG" ]; then
-	COMMAND="mv $(quote "$LOG") $(quote "$OLD_LOG")"
-	print_and_execute "$COMMAND"
+	mv "$LOG" "$OLD_LOG"
 fi
 
 # Log start time.
 if [ ! "$DRY_RUN" = "true" ]; then
 	echo "BEGIN $DATE" >> "$LOG"
+fi
+
+
+# Caffeinate if it's available.
+echo ""
+if [ -f /usr/bin/caffeinate ]; then
+	MESSAGE="Ensuring the machine doesn't sleep until the script ends..."
+	print_and_log "$MESSAGE"
+
+	COMMAND="/usr/bin/caffeinate -dim -w $$ &"
+	print_and_execute "$COMMAND"
+else
+	MESSAGE="You may want to take steps to ensure your machine doesn't sleep during this process!"
+	print_and_log "$MESSAGE"
 fi
 
 
@@ -319,7 +325,7 @@ if [ ! "$JUST_CREATED" = "true" ]; then
 	print_and_log_command "$COMMAND"
 	while read -r RELATIVE_PATH; do
 		RSYNC_OPTIONS="--archive --hard-links --xattrs --relative"
-		COMMAND="$CAFFEINATE$SUDO$RSYNC $RSYNC_OPTIONS $(quote "$RELATIVE_PATH") $(quote "$INCREMENTS_DIR")"
+		COMMAND="$SUDO$RSYNC $RSYNC_OPTIONS $(quote "$RELATIVE_PATH") $(quote "$INCREMENTS_DIR")"
 		if [ ! "$DRY_RUN" = "true" ]; then
 			# Log (don't print, there could be lots of these!)
 			echo $ $COMMAND >> "$LOG"
@@ -357,7 +363,7 @@ else
 	COPY_TO=$CURRENT_BACKUP_DIR
 fi
 
-COMMAND="$CAFFEINATE$SUDO$RSYNC $RSYNC_OPTIONS $(quote "$ORIGINAL_DIR") $(quote "$COPY_TO")"
+COMMAND="$SUDO$RSYNC $RSYNC_OPTIONS $(quote "$ORIGINAL_DIR") $(quote "$COPY_TO")"
 print_and_log_command "$COMMAND"
 if [ ! "$DRY_RUN" = "true" ]; then
 	# Evaluate and log.
