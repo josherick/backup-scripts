@@ -82,13 +82,6 @@ if [ ! -f "$EXCLUDE_FILE" ]; then
 	exit 1
 fi
 
-# Caffeinate if it's available.
-if [ -f /usr/bin/caffeinate ]; then
-	CAFFEINATE="/usr/bin/caffeinate -i "
-else
-	CAFFEINATE=""
-fi
-
 # Run as sudo if requested.
 if [ "$RUN_AS_SUPERUSER" = "true" ]; then
 	SUDO="sudo "
@@ -197,17 +190,26 @@ quote()
 # Define a unique date string to identify this backup.
 DATE=`date +%F_%H.%M.%S.%Z`
 
+# Caffeinate if it's available.
+if [ -f /usr/bin/caffeinate ]; then
+	COMMAND="/usr/bin/caffeinate -dim -w $$"
+	print_and_execute "$COMMAND"
+fi
+
+DIRNAME="`dirname \"$LOG\"`"
 # Create directory our log should be in if it doesn't exist.
-if [ ! -e "`dirname \"$LOG\"`" ] && [ ! "$DRY_RUN" = "true" ]; then
-	mkdir -p "`dirname \"$LOG\"`"
+if [ ! -e "$DIRNAME" ]; then
+	COMMAND="mkdir -p $(quote "$DIRNAME")"
+	print_and_execute "$COMMAND"
+	
 fi
 
 # Suffix the old log file with "old" if it exists and this isn't a dry-run.
-DIRNAME="`dirname \"$LOG\"`"
 BASENAME="`basename \"$LOG\"`"
 OLD_LOG="${DIRNAME}/${BASENAME}.old"
-if [ -f "$LOG" ] && [ ! "$DRY_RUN" = "true" ]; then
-	mv "$LOG" "$OLD_LOG"
+if [ -f "$LOG" ]; then
+	COMMAND="mv $(quote "$LOG") $(quote "$OLD_LOG")"
+	print_and_execute "$COMMAND"
 fi
 
 # Log start time.
