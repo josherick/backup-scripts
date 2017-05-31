@@ -9,18 +9,20 @@
 PLATFORM="mac"
 
 # The location of the drive to backup to, without a trailing slash.
-DRIVE="/Volumes/Nemo 4TB RAID 1"
+#DRIVE="/Volumes/Nemo 4TB RAID 1"
+DRIVE="/Users/joshsherick/backup_test/drive"
 
 # The root location of what you want to back up.
 # A trailing slash indicates that the contents of the directory should be
 # backed up, which is probably what you want.
-ORIGINAL_DIR="/"
+#ORIGINAL_DIR="/"
+ORIGINAL_DIR="/Users/joshsherick/backup_test/fs/"
 
 # Hostname of this computer, used to identify its backups from other machines.
 HOSTNAME=`hostname`
 
 # Set to true to run rsync as the superuser using sudo.
-RUN_AS_SUPERUSER="true"
+RUN_AS_SUPERUSER="false"
 
 # Set to false if the script shouldn't prompt for confirmation before running.
 ASK_FOR_CONFIRMATION="true"
@@ -51,6 +53,22 @@ fi
 # sed --version fails on BSD sed.
 if ! $SED --version > /dev/null 2> /dev/null ; then
 	echo "Make sure you have GNU sed installed!"
+	exit 1
+fi
+
+# Must have GNU split
+if [ -f /usr/local/bin/gsplit ]; then
+	SPLIT="/usr/local/bin/gsplit" # homebrew
+elif [ -f /usr/bin/split ]; then
+	SPLIT="/usr/bin/split"
+else
+	echo "\$SPLIT should be set to GNU split"
+	exit 1
+fi
+
+# split --version fails on BSD split.
+if ! $SPLIT --version > /dev/null 2> /dev/null ; then
+	echo "Make sure you have GNU split installed!"
 	exit 1
 fi
 
@@ -181,8 +199,7 @@ function print_and_execute {
 	fi
 }
 
-quote()
-{
+function quote {
     local quoted=${1//\'/\'\\\'\'}
     printf "'%s'" "$quoted"
 }
@@ -243,8 +260,8 @@ if [ -f "$BACKUP_DIR/current" ]; then
 	print_and_execute "$COMMAND"
 
 	# Create a space the actual files that are overwritten by this backup.
-	INCREMENTS_DIR=$INCREMENTS_DIR/changes
-	COMMAND="mkdir $(quote "$INCREMENTS_DIR")"
+	CHANGES_DIR=$INCREMENTS_DIR/changes
+	COMMAND="mkdir $(quote "$CHANGES_DIR")"
 	print_and_execute "$COMMAND"
 else
 	MESSAGE="Creating backup directory and setting it to the current backup..."
@@ -257,10 +274,6 @@ else
 	# Create increments directory if it doesn't exist.
 	COMMAND="mkdir -p $(quote "$BACKUP_DIR/increments")"
 	print_and_execute "$COMMAND"
-
-	# This shouldn't be used since this is our first backup, but we'll create
-	# it just in case.
-	INCREMENTS_DIR=$BACKUP_DIR/increments
 
 	JUST_CREATED="true"
 fi
@@ -283,6 +296,8 @@ if [ ! "$JUST_CREATED" = "true" ]; then
 	MESSAGE="Calculating and making copies of files that will be pruned by rsync..."
 	print_and_log "$MESSAGE"
 
+	DELETION_SCRIPT=`realpath deletion-helper.sh`
+
 	if [ ! "$DRY_RUN" = "true" ]; then
 		COPY_TO=$CURRENT_BACKUP_DIR
 	else
@@ -304,6 +319,30 @@ if [ ! "$JUST_CREATED" = "true" ]; then
 		eval $COMMAND
 	fi
 
+	# We are going to store lists of the files that will be deleted in this
+	# directory, 1000 files at a time.
+	# This lets us speed up deletion significantly, since we can copy 1000 
+	# files at a time rather than having to start and stop rsync for every 
+	# file copy.
+	# And, since we split the list into multiple files, we don't have to wait
+	# for rsync to complete it's deleted file computation before starting to
+	# copy files.
+	DELETIONS_LIST_DIR=$INCREMENTS_DIR/deletions-list
+	COMMAND="mkdir -p $(quote "$DELETIONS_LIST_DIR/comm")"
+	print_and_execute "$COMMAND"
+
+	# Invoke the deletion helper, which will exit when it's finished.
+	COMMAND="$DELETION_SCRIPT \
+$(quote "$DELETIONS_LIST_DIR") \
+$(quote "$CURRENT_BACKUP_DIR") \
+$(quote "$CHANGES_DIR") \
+\"$RSYNC\" \
+\"$RUN_AS_SUPERUSER\" \
+\"$DRY_RUN\""
+
+	echo $ $GREEN$COMMAND$NORMAL
+	eval $COMMAND & >> "$LOG" 2>&1 | tee -a $LOG
+
 	# Pipe rsync dry-run to sed, filtering lines down to only the relative
 	# paths of the files that will be deleted, then copy each file individually
 	# with it's relative path into the increments directory.
@@ -318,24 +357,35 @@ if [ ! "$JUST_CREATED" = "true" ]; then
 
 	COMMAND="$SUDO$RSYNC $RSYNC_OPTIONS $(quote "$ORIGINAL_DIR") $(quote "$COPY_TO") | \
 			$SED -n \"/^deleting /p\" | \
-			$SED \"s/^deleting //g\""
+			$SED \"s/^deleting //g\" | \
+			$SPLIT -d --suffix-length=7 - $(quote "$INCREMENTS_DIR/deletions-list/")"
+	print_and_execute "$COMMAND"
 
-	COPIED_FILES=0
-
-	print_and_log_command "$COMMAND"
-	while read -r RELATIVE_PATH; do
-		RSYNC_OPTIONS="--archive --hard-links --xattrs --relative"
-		COMMAND="$SUDO$RSYNC $RSYNC_OPTIONS $(quote "$RELATIVE_PATH") $(quote "$INCREMENTS_DIR")"
-		if [ ! "$DRY_RUN" = "true" ]; then
-			# Log (don't print, there could be lots of these!)
-			echo $ $COMMAND >> "$LOG"
-			eval $COMMAND 2> >(tee -a "$LOG" >&2)
+	TOTAL_FILES="`find $DELETIONS_LIST_DIR -type f -maxdepth 1 | xargs cat | wc -l`"
+	MESSAGE="Computation of files to be pruned resulted in $TOTAL_FILES files."
+	print_and_log "$MESSAGE"
+	
+	# Wait until the deletion helper is done.
+	while [ ! -f "$DELETIONS_LIST_DIR/comm/copy-finished" ] && [ ! "$DRY_RUN" = "true" ] ; do
+		touch $DELETIONS_LIST_DIR/comm/computation-finished
+		if [ -f "$DELETIONS_LIST_DIR/comm/copied-files" ]; then
+			CURRENT_FILE_NUM="`cat \"$DELETIONS_LIST_DIR/comm/copied-files\"`"
+			echo -en "\rCurrently copying $CURRENT_FILE_NUM of $TOTAL_FILES";
 		fi
-		COPIED_FILES=$((COPIED_FILES + 1))
-	done < <(eval $COMMAND 2> >(tee -a "$LOG" >&2))
+		sleep 1
+	done
 
+	COPIED_FILES="`cat \"$DELETIONS_LIST_DIR/comm/copied-files\"`"
 	MESSAGE="Copied $COPIED_FILES files whose originals will be pruned in the next step."
 	print_and_log "$MESSAGE"
+
+	echo "Computation of $TOTAL_FILES files to be pruned finished."
+
+	# The deletion helper is done.
+	# Delete the deletions list directory.
+	COMMAND="rm -r $(quote "$DELETIONS_LIST_DIR")"
+	print_and_execute "$COMMAND"
+
 fi
 
 
@@ -352,7 +402,7 @@ RSYNC_OPTIONS="--archive \
 	--delete-after \
 	--backup \
 	--info=progress2 \
-	--backup-dir=$(quote "$INCREMENTS_DIR")"
+	--backup-dir=$(quote "$CHANGES_DIR")"
 
 # Dry-runs log to console, real runs log to log file.
 if [ "$DRY_RUN" = "true" ]; then
