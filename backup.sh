@@ -68,8 +68,8 @@ fi
 RSYNC_VER="`$RSYNC --version | \
 head -1 | \
 $SED \"s/^.*[^0-9]\([0-9]*\.[0-9]*\.[0-9]*\).*$/\1/\"`"
-RSYNC_MAJOR_VER="`echo $RSYNC_VER | cut -c 1`"
-RSYNC_MINOR_VER="`echo $RSYNC_VER | cut -c 3`"
+RSYNC_MAJOR_VER="`echo "$RSYNC_VER" | cut -c 1`"
+RSYNC_MINOR_VER="`echo "$RSYNC_VER" | cut -c 3`"
 if [ "$RSYNC_MAJOR_VER" -lt "3" ] || [ "$RSYNC_MINOR_VER" -lt "1" ]; then
 	echo "$RSYNC is version $RSYNC_VER, must be rsync>=3.1.0"
 	exit 1
@@ -161,28 +161,27 @@ fi
 
 # Define several functions to standardize printing, logging, and evaluating.
 function print_and_log {
-	echo $1
+	echo "$1"
 	if [ ! "$DRY_RUN" = "true" ]; then
-		echo $1 >> "$LOG"
+		echo "$1" >> "$LOG"
 	fi
 }
 
 function print_and_log_command {
-	echo $ $GREEN$1$NORMAL
+	echo "$ $GREEN$1$NORMAL"
 	if [ ! "$DRY_RUN" = "true" ]; then
-		echo $ $1 >> "$LOG"
+		echo "$ $1" >> "$LOG"
 	fi
 }
 
 function print_and_execute {
 	print_and_log_command "$1"
 	if [ ! "$DRY_RUN" = "true" ]; then
-		eval $1 2> >(tee -a "$LOG" >&2)
+		eval "$1" 2> >(tee -a "$LOG" >&2)
 	fi
 }
 
-quote()
-{
+function quote {
     local quoted=${1//\'/\'\\\'\'}
     printf "'%s'" "$quoted"
 }
@@ -295,30 +294,30 @@ if [ ! "$JUST_CREATED" = "true" ]; then
 	COMMAND="cd $(quote "$COPY_TO")"
 	if [ ! "$DRY_RUN" = "true" ]; then
 		# Evaluate and log.
-		echo $ $GREEN$COMMAND$NORMAL
-		echo $ $COMMAND >> "$LOG"
-		eval $COMMAND 2> >(tee -a "$LOG" >&2)
+		echo "$ $GREEN$COMMAND$NORMAL"
+		echo "$ $COMMAND" >> "$LOG"
+		eval "$COMMAND" 2> >(tee -a "$LOG" >&2)
 	else
 		# Evaluate without any logging.
 		echo "$ ${GREEN}cd $(quote "$CURRENT_BACKUP_DIR")$NORMAL"
-		eval $COMMAND
+		eval "$COMMAND"
 	fi
 
 	# Pipe rsync dry-run to sed, filtering lines down to only the relative
 	# paths of the files that will be deleted, then copy each file individually
 	# with it's relative path into the increments directory.
 	RSYNC_OPTIONS="--archive \
-		--xattrs \
-		--hard-links \
-		--update \
-		--dry-run \
-		--verbose \
-		--delete \
-		--exclude-from=$(quote "$EXCLUDE_FILE")"
+--xattrs \
+--hard-links \
+--update \
+--dry-run \
+--verbose \
+--delete \
+--exclude-from=$(quote "$EXCLUDE_FILE")"
 
 	COMMAND="$SUDO$RSYNC $RSYNC_OPTIONS $(quote "$ORIGINAL_DIR") $(quote "$COPY_TO") | \
-			$SED -n \"/^deleting /p\" | \
-			$SED \"s/^deleting //g\""
+$SED -n \"/^deleting /p\" | \
+$SED \"s/^deleting //g\""
 
 	COPIED_FILES=0
 
@@ -328,11 +327,11 @@ if [ ! "$JUST_CREATED" = "true" ]; then
 		COMMAND="$SUDO$RSYNC $RSYNC_OPTIONS $(quote "$RELATIVE_PATH") $(quote "$INCREMENTS_DIR")"
 		if [ ! "$DRY_RUN" = "true" ]; then
 			# Log (don't print, there could be lots of these!)
-			echo $ $COMMAND >> "$LOG"
-			eval $COMMAND 2> >(tee -a "$LOG" >&2)
+			echo "$ $COMMAND" >> "$LOG"
+			eval "$COMMAND" 2> >(tee -a "$LOG" >&2)
 		fi
 		COPIED_FILES=$((COPIED_FILES + 1))
-	done < <(eval $COMMAND 2> >(tee -a "$LOG" >&2))
+	done < <(eval "$COMMAND" 2> >(tee -a "$LOG" >&2))
 
 	MESSAGE="Copied $COPIED_FILES files whose originals will be pruned in the next step."
 	print_and_log "$MESSAGE"
@@ -344,15 +343,15 @@ print_and_log ""
 print_and_log "Starting rsync..."
 
 RSYNC_OPTIONS="--archive \
-	--xattrs \
-	--hard-links \
-	--update \
-	--exclude-from=$(quote "$EXCLUDE_FILE") \
-	--fuzzy \
-	--delete-after \
-	--backup \
-	--info=progress2 \
-	--backup-dir=$(quote "$INCREMENTS_DIR")"
+--xattrs \
+--hard-links \
+--update \
+--exclude-from=$(quote "$EXCLUDE_FILE") \
+--fuzzy \
+--delete-after \
+--backup \
+--info=progress2 \
+--backup-dir=$(quote "$INCREMENTS_DIR")"
 
 # Dry-runs log to console, real runs log to log file.
 if [ "$DRY_RUN" = "true" ]; then
@@ -367,10 +366,10 @@ COMMAND="$SUDO$RSYNC $RSYNC_OPTIONS $(quote "$ORIGINAL_DIR") $(quote "$COPY_TO")
 print_and_log_command "$COMMAND"
 if [ ! "$DRY_RUN" = "true" ]; then
 	# Evaluate and log.
-	eval $COMMAND 2> >(tee -a "$LOG" >&2)
+	eval "$COMMAND" 2> >(tee -a "$LOG" >&2)
 else
 	# Evaluate without any logging.
-	eval $COMMAND
+	eval "$COMMAND"
 fi
 
 # Log end time.
