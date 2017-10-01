@@ -76,3 +76,7 @@ Library/Mobile Documents.*
 $Recycle.Bin
 Saved Application State
 Library/Preferences/ByHost/com.apple.loginwindow*
+
+# Temporary files that might disappear during the backup
+/private/var/run/auditd.pid
+/private/var/audit/*.not_terminated
